@@ -7,21 +7,6 @@ using Newtonsoft.Json;
 
 namespace MoveLocationsFromRedisToSql
 {
-	public sealed class Settings
-	{
-		public string RedisConnectionString { get; set; }
-		public string SqlConnectionString { get; set; }
-	}
-
-	public class UserLocation
-	{
-		public Guid UserID { get; set; }
-		public double Latitude { get; set; }
-		public double Longitude { get; set; }
-		public bool IsStale { get; set; }
-		public DateTimeOffset Timestamp { get; set; }
-	}
-
 	internal class Program
 	{
 		static void Main(string[] args)
@@ -29,36 +14,50 @@ namespace MoveLocationsFromRedisToSql
 			IConfiguration config = new ConfigurationBuilder()
 				.AddJsonFile("appsettings.json")
 				.Build();
-			Settings settings = config.GetRequiredSection("Settings").Get<Settings>();
+			var settings = config.GetRequiredSection("Settings").Get<Settings>();
 
-			var connection = ConnectionMultiplexer.Connect(settings.RedisConnectionString);
-			var servers = connection.GetServers();
-			var db = connection.GetDatabase();
-			var userLocations = new List<UserLocation>();
-			foreach (var server in servers)
+			if (settings != null)
 			{
-				var keys = server.Keys(pattern: "lba:*");
-				foreach(var key in keys)
+				var connection = ConnectionMultiplexer.Connect(settings.RedisConnectionString);
+				var servers = connection.GetServers();
+				var db = connection.GetDatabase();
+				var userLocations = new List<UserLocation>();
+
+				Console.WriteLine("Pulling locations out of redis");
+				foreach (var server in servers)
 				{
-					var userKeys = db.HashKeys(key);
-					foreach (var userKey in userKeys)
+					var keys = server.Keys(pattern: "lba:*");
+					foreach (var key in keys)
 					{
-						var uv = db.HashGet(key, userKey);
-						var userLocation = JsonConvert.DeserializeObject<UserLocation>(uv);
-						userLocation.UserID = Guid.Parse(userKey);
-						userLocations.Add(userLocation);
+						var userKeys = db.HashKeys(key);
+						foreach (var userKey in userKeys)
+						{
+							var uv = db.HashGet(key, userKey);
+							var userLocation = JsonConvert.DeserializeObject<UserLocation>(uv);
+							userLocation.UserID = Guid.Parse(userKey);
+							userLocations.Add(userLocation);
+						}
 					}
 				}
+
+				Console.WriteLine("Writing locations to Database");
+				using (IDbConnection dbConnection = new SqlConnection(settings.SqlConnectionString))
+				{
+					dbConnection.Open();
+					using (var transaction = dbConnection.BeginTransaction())
+					{
+						userLocations.ForEach(ul =>
+						{
+							dbConnection.Execute("INSERT INTO UserLocation VALUES (NEWID(), @userID, @latitude, @longitude, geography::Point(@latitude, @longitude, 4326), GETUTCDATE(), 0)", ul, transaction: transaction);
+						});
+						transaction.Commit();
+					}
+				}
+
+				Console.WriteLine("All done.");
 			}
 
-			using (IDbConnection dbConnection = new SqlConnection(settings.SqlConnectionString))
-			{
-				dbConnection.Open();
-				userLocations.ForEach(ul =>
-				{
-					dbConnection.Execute("INSERT INTO UserLocation VALUES (NEWID(), @userID, @latitude, @longitude, geography::Point(@latitude, @longitude, 4326), GETUTCDATE(), 0)", ul);
-				});
-			}
+			
 		}
 	}
 }
