@@ -48,7 +48,7 @@ namespace MoveLocationsFromRedisToSql
 					{
 						userLocations.ForEach(ul =>
 						{
-							dbConnection.Execute("INSERT INTO UserLocation VALUES (NEWID(), @userID, @latitude, @longitude, geography::Point(@latitude, @longitude, 4326), GETUTCDATE(), 0)", ul, transaction: transaction);
+							dbConnection.Execute("INSERT INTO UserLocation VALUES (NEWID(), @userID, @latitude, @longitude, geography::Point(@latitude, @longitude, 4326), @timestamp, @isStale)", ul, transaction: transaction);
 						});
 						transaction.Commit();
 					}
